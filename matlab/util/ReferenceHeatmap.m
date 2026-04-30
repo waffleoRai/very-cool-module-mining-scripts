@@ -4,6 +4,7 @@ classdef ReferenceHeatmap
 
     properties
         addrFmtChars = 8;
+        heatmapRenderPlt = turbo; %Use parula for a viridis look
 
         binShift = 0;
         binSize = 64;
@@ -86,10 +87,14 @@ classdef ReferenceHeatmap
             end
 
             %Align to bins
-            fromMin = alignDown(fromMin + obj.binShift, obj.binSize) + 1; 
-            fromMax = alignDown(fromMax + obj.binSize + obj.binShift, obj.binSize) + 1; 
-            toMin = alignDown(toMin + obj.binShift, obj.binSize) + 1; 
-            toMax = alignDown(toMax + obj.binSize + obj.binShift, obj.binSize) + 1; 
+            fromMin = alignDown(fromMin, obj.binSize) + 1; 
+            fromMax = alignDown(fromMax + obj.binSize, obj.binSize) + 1; 
+            toMin = alignDown(toMin, obj.binSize) + 1; 
+            toMax = alignDown(toMax + obj.binSize, obj.binSize) + 1; 
+            fromMin = fromMin + obj.binShift;
+            fromMax = fromMax + obj.binShift;
+            toMin = toMin + obj.binShift;
+            toMax = toMax + obj.binShift;
 
             %Mirror if symmetric
             if obj.isSymmetric
@@ -222,7 +227,7 @@ classdef ReferenceHeatmap
             figHandle = figure(figNo);
             clf;
             hm = heatmap(xlbl, ylbl, obj.rawDensityMap);
-            hm.Colormap = turbo;
+            hm.Colormap = obj.heatmapRenderPlt;
             hm.ColorLimits = [zmin zmax];
             hm.CellLabelColor = 'none';
             hm.GridVisible = 'off';
@@ -242,7 +247,7 @@ classdef ReferenceHeatmap
             figHandle = figure(figNo);
             clf;
             hm = heatmap(xlbl, ylbl, obj.pearsonDistMap);
-            hm.Colormap = turbo;
+            hm.Colormap = obj.heatmapRenderPlt;
             hm.ColorLimits = [0 1];
             hm.CellLabelColor = 'none';
             hm.GridVisible = 'off';

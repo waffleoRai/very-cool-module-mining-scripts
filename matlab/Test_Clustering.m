@@ -13,3 +13,7 @@ heatmapRegion.endAddress = uint64(0x1099A6C0);
 
 cAnalyzer = ClusterAnalyzer;
 [symList, boundScores] = cAnalyzer.evaluate(refTable, heatmapRegion, true);
+
+figure(2);
+clf;
+plot(symList, boundScores);

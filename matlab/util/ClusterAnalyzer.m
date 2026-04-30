@@ -2,12 +2,15 @@
 %%
 classdef ClusterAnalyzer
 
+    %TODO: Having some issues detecting tiny clusters < seedClusterSize
+    %bins
+
     properties
         srcRefTable;
         regionSpec;
 
         minBinSizePwr = 3;
-        maxBinSizePwr = 5;
+        maxBinSizePwr = 7;
         shiftsPerBin = 4;
 
         seedClusterSize = 4;
@@ -19,6 +22,7 @@ classdef ClusterAnalyzer
         meanGroupingFuncs = ClusterAnalyzer.genDefaultMeanGroupingFunctions();
         stdGroupingFuncs = ClusterAnalyzer.genDefaultStdGroupingFunctions();
         scoreWeights = [0.0 0.25 0.5 0.75 1.0];
+        scoreMaxBack = 5;
         
     end
 
@@ -44,6 +48,7 @@ classdef ClusterAnalyzer
 
             %Try different bin sizes and shifts
             rng('default');
+            bszWeight = 1;
             for binPwr = obj.maxBinSizePwr : -1 : obj.minBinSizePwr
                 binSize = 2 ^ binPwr;
                 binShift = 0;
@@ -61,36 +66,42 @@ classdef ClusterAnalyzer
                     roundScores = obj.clusterHeatmap(hmobj);
                     binCount = size(roundScores, 2);
                     for b = 1:binCount
-                        [startSym, endSym] = hmobj.getCoverageOfXBins(b, b+1, true);
-                        stidx = find(symList == startSym, 1);
-                        edidx = find(symList == endSym, 1);
-                        runSums(stidx : edidx) = runSums(stidx : edidx) + roundScores(b);
-                        runTallies(stidx : edidx) = runTallies(stidx : edidx) + 1;
+                        if ~isnan(roundScores(b))
+                            [startSym, endSym] = hmobj.getCoverageOfXBins(b, b+1, true);
+                            stidx = find(symList == startSym, 1);
+                            edidx = find(symList == endSym, 1);
+                            if edidx > totalSymCount
+                                edidx = totalSymCount;
+                            end
+                            runSums(stidx : edidx) = runSums(stidx : edidx) + (roundScores(b) * bszWeight);
+                            runTallies(stidx : edidx) = runTallies(stidx : edidx) + bszWeight;
+                        end
                     end
 
                     %-------------------------[DEBUG]---------------------------
-                    dmcopy = hmobj.pearsonDistMap;
-                    N = size(dmcopy, 1);
-                    for i = 1:(N-1)
-                        dmcopy(i, (i+1):N) = roundScores(i);
-                    end
-
-                    xbins = size(hmobj.xEdgesCulled, 2);
-                    ybins = size(hmobj.yEdgesCulled, 2);
-                    xlbl = hmobj.adjSymTable{hmobj.xEdgesCulled(1:(xbins-1)), 'AddressString'};
-                    ylbl = hmobj.adjSymTable{hmobj.yEdgesCulled(1:(ybins-1)), 'AddressString'};
-                    clear xbins ybins
-
-                    figure(100);
-                    clf;
-                    hm = heatmap(xlbl, ylbl, dmcopy);
-                    hm.Colormap = turbo;
-                    hm.ColorLimits = [0 1];
-                    hm.CellLabelColor = 'none';
-                    hm.GridVisible = 'off';
-                    title('Pearson Distance w/ Boundary Scores');
-
-                    clear dmcopy N i xlbl ylbl hm
+                    % hmobj.heatmapRenderPlt = turbo;
+                    % dmcopy = hmobj.pearsonDistMap;
+                    % N = size(dmcopy, 1);
+                    % for i = 1:(N-1)
+                    %     dmcopy(i, (i+1):N) = roundScores(i);
+                    % end
+                    % 
+                    % xbins = size(hmobj.xEdgesCulled, 2);
+                    % ybins = size(hmobj.yEdgesCulled, 2);
+                    % xlbl = hmobj.adjSymTable{hmobj.xEdgesCulled(1:(xbins-1)), 'AddressString'};
+                    % ylbl = hmobj.adjSymTable{hmobj.yEdgesCulled(1:(ybins-1)), 'AddressString'};
+                    % clear xbins ybins
+                    % 
+                    % figure(100);
+                    % clf;
+                    % hm = heatmap(xlbl, ylbl, dmcopy);
+                    % hm.Colormap = hmobj.heatmapRenderPlt;
+                    % hm.ColorLimits = [0 1];
+                    % hm.CellLabelColor = 'none';
+                    % hm.GridVisible = 'off';
+                    % title('Pearson Distance w/ Boundary Scores');
+                    % 
+                    % clear dmcopy N i xlbl ylbl hm
                     %-------------------------[DEBUG]---------------------------
 
                     %Reroll shift
@@ -100,6 +111,8 @@ classdef ClusterAnalyzer
                         binShift = shiftCheck - 1;
                     end
                     binShiftDone(shiftCheck) = true;
+
+                    bszWeight = bszWeight + 1;
                 end
 
                 %Calculate means...
@@ -196,7 +209,180 @@ classdef ClusterAnalyzer
 
         %%
         function [score, candSets, cnext] = scoreBound(obj, heatmapObj, candSets, c)
-            %TODO
+            %score = NaN;
+            cnext = c + 1;
+            N = size(candSets, 2);
+
+            candSet = candSets(c);
+            if ~isempty(candSet.principal)
+                score = 0.0;
+                cnext = c + candSet.principal.len - 1;
+            else
+                cplus = c + 1;
+                ssum = 0.0;
+                tally = 0;
+
+                %Look for primary barriers
+                if candSet.barrierPrimary == cplus
+                    score = obj.scoreWeights(5);
+                    return;
+                end
+
+                for d = (c-1):-1:1
+                    candSetCheck = candSets(d);
+                    if (candSetCheck.barrierPrimary == cplus)
+                        ssum = ssum + obj.scoreWeights(5);
+                        tally = tally + 1;
+                    end
+                end
+                clear d candSetCheck
+
+                %Compare smallest clusters for c and cplus
+                highWeightScore = NaN;
+                setPlus = candSets(cplus);
+                distWeight = obj.scoreMaxBack;
+                if ~isempty(setPlus.principal)
+                    if ~isempty(candSet.candTable)
+                        checkCand = table2struct(candSet.candTable(1, :));
+                    else
+                        checkCand = ClusterAnalyzer.genClusterCandStruct();
+                        checkCand.start = c;
+                        checkCand.len = setPlus.principal.len + 1;
+                        checkCand.mergePoint = cplus;
+                        checkCand = obj.initializeCandidate(checkCand, heatmapObj);
+                    end
+                    % score = obj.scoreWeights(checkCand.clusterGroup + 1);
+                    % return;
+                    highWeightScore = obj.scoreWeights(checkCand.clusterGroup + 1);
+                    clear checkCand
+                else
+                    %Make sure there is enough room after to do a
+                    %comparison
+                    minEnd = cplus + obj.seedClusterSize - 1;
+                    testOkay = true;
+                    if (minEnd > N); testOkay = false; end
+                    if testOkay
+                        %Scan barriers
+                        for d = cplus:minEnd
+                            testSet = candSets(d);
+                            if (testSet.barrier > 0) & (testSet.barrier <= minEnd)
+                                testOkay = false;
+                                break;
+                            end
+                        end
+                        clear d testSet
+                    end
+                    clear minEnd
+
+                    if testOkay
+                        checkCandA = [];
+                        checkCandB = [];
+                        if ~isempty(candSet.candTable)
+                            checkCandA = table2struct(candSet.candTable(1, :));
+                        end
+                        if ~isempty(setPlus.candTable)
+                            checkCandB = table2struct(setPlus.candTable(1, :));
+                        end
+                        if isempty(checkCandA) & isempty(checkCandB)
+                            checkCandA = ClusterAnalyzer.genClusterCandStruct();
+                            checkCandA.start = c;
+                            checkCandA.len = obj.seedClusterSize + 1;
+                            checkCandA.mergePoint = cplus;
+                            checkCandA = obj.initializeCandidate(checkCandA, heatmapObj);
+                        end
+                        if isempty(checkCandA) & ~isempty(checkCandB)
+                            checkCandA = ClusterAnalyzer.genClusterCandStruct();
+                            checkCandA.start = c;
+                            checkCandA.len = checkCandB.len + 1;
+                            checkCandA.mergePoint = cplus;
+                            checkCandA = obj.initializeCandidate(checkCandA, heatmapObj);
+                        end
+                        if isempty(checkCandB) & ~isempty(checkCandA)
+                            checkCandB = ClusterAnalyzer.genClusterCandStruct();
+                            checkCandB.start = cplus;
+                            checkCandB.len = checkCandA.len - 1;
+                            checkCandB.mergePoint = cplus+1;
+                            checkCandB = obj.initializeCandidate(checkCandB, heatmapObj);
+                        end
+
+                        gdiff = checkCandA.clusterGroup - checkCandB.clusterGroup;
+                        if (gdiff < 0); gdiff = 0; end
+                        useScore = (obj.scoreWeights(gdiff+1) + obj.scoreWeights(checkCandA.clusterGroup+1)) ./ 2;
+                        ssum = ssum + (useScore .* distWeight);
+                        tally = tally + distWeight;
+                        %highWeightScore = obj.scoreWeights(gdiff+1);
+                        clear gdiff checkCandA checkCandB useScore
+                    end
+                    clear testOkay
+                end
+
+                %Look upstream
+                for backDist = 1:obj.scoreMaxBack
+                    backOffset = backDist + obj.seedClusterSize - 2;
+                    backIndex = c - backOffset;
+                    if backIndex < 1
+                        break;
+                    end
+                    distWeight = obj.scoreMaxBack - backDist + 1;
+
+                    %Make sure there is enough space
+                    testOkay = true;
+                    for d = backIndex:c
+                        testSet = candSets(d);
+                        if (testSet.barrier > 0) & (testSet.barrier <= cplus)
+                            testOkay = false;
+                            break;
+                        end
+                    end
+                    clear d testSet
+
+                    if testOkay
+                        candALen = backOffset + 1;
+                        checkCand = ClusterAnalyzer.genClusterCandStruct();
+                        checkCand.start = backIndex;
+                        checkCand.len = candALen;
+                        checkCand.mergePoint = c;
+                        checkCand = obj.initializeCandidate(checkCand, heatmapObj);
+                        gA = checkCand.clusterGroup;
+
+                        checkCand = ClusterAnalyzer.genClusterCandStruct();
+                        checkCand.start = backIndex;
+                        checkCand.len = candALen + 1;
+                        checkCand.mergePoint = cplus;
+                        checkCand = obj.initializeCandidate(checkCand, heatmapObj);
+                        gB = checkCand.clusterGroup;
+
+                        gdiff = gB - gA;
+                        if (gdiff < 0); gdiff = 0; end
+                        useScore = (obj.scoreWeights(gdiff+1) + obj.scoreWeights(gB+1)) ./ 2;
+                        ssum = ssum + (useScore .* distWeight);
+                        tally = tally + distWeight;
+                        clear gdiff checkCand gA gB
+                    else
+                        break;
+                    end
+                end 
+                clear backDist backOffset backIndex testOkay
+
+                if ~isnan(highWeightScore)
+                    if tally > 0
+                        amt = tally;
+                        ssum = ssum + (highWeightScore .* amt);
+                        tally = tally + amt;
+                    else
+                        tally = 1;
+                        ssum = highWeightScore;
+                    end
+                end
+                score = ssum ./ tally;
+            end
+
+            % if isnan(score)
+            %     %fprintf('DEBUG HOLD\n');
+            %     score = 1.0;
+            % end
+
+            candSets(c) = candSet;
         end
 
         %%
@@ -207,7 +393,7 @@ classdef ClusterAnalyzer
 
             %Create base list and seed clusters
             N = size(heatmapObj.pearsonDistMap,1);
-            %boundScores = NaN(1, N);
+            boundScores = NaN(1, N);
             candSets(N) = ClusterAnalyzer.genClusterCandSetStruct();
             for i = 1:N
                 candSet = candSets(N);
@@ -223,7 +409,7 @@ classdef ClusterAnalyzer
                     if (seedCand.clusterGroup >= 4)
                         %Auto split.
                         candSets(i) = candSet;
-                        candSets = addBarrier(candSets, i, cEnd);
+                        candSets = ClusterAnalyzer.addBarrier(candSets, i, cEnd);
                         candSet = candSets(i);
                     else
                         %Put as head.
@@ -287,7 +473,7 @@ classdef ClusterAnalyzer
                                 candSet.candTable = ClusterAnalyzer.addToCandTable(candSet.candTable, newCand);
                             else
                                 candSets(anchorIdx) = candSet;
-                                candSets = addBarrier(candSets, anchorIdx, cnext);
+                                candSets = ClusterAnalyzer.addBarrier(candSets, anchorIdx, cnext);
                                 candSet = candSets(anchorIdx);
                             end
                             clear nextSet newCand
@@ -303,59 +489,17 @@ classdef ClusterAnalyzer
             %Clean up sets a little bit
             candSets = ClusterAnalyzer.tidyCandSets(candSets);
 
-            %TODO Turn results into bin bound scores --------------------
+            %Turn results into bin bound scores --------------------
             c = 1;
-            %backBarrier = 1;
-            scoreSums = zeros(1, N);
-            scoreTallies = zeros(1, N);
-            while c < (N - 1)
-                candSet = candSets(c);
-                if ~isempty(candSet.principal)
-                    cnext = c + candSet.principal.len; %Start of next cluster
-                    scoreSums(c:(cnext - 2)) = 0.0;
-                    scoreTallies(c:(cnext - 2)) = 1;
-                    %backBarrier = cnext - 1;
-                    c = cnext - 1;
-                    clear cnext
-                else
-                    %Grab any cluster candidates that cover c and c+1
-                    cplus = c+1;
-                    for d = c:-1:1
-                        candSetCheck = candSets(d);
-                        if candSetCheck.barrier > 0
-                            if candSetCheck.barrier == cplus
-                                scoreSums(c) = scoreSums(c) + obj.scoreWeights(5);
-                                scoreTallies(c) = scoreTallies(c) + 1;
-                            elseif candSetCheck.barrier <= c
-                                break;
-                            end
-                        end
-                        if ~isempty(candSetCheck.candTable)
-                            %TODO Only use those that have as a merge
-                            %point?
-                            candEnd = d + candSetCheck.candTable{:, 'len'};
-                            inclBool = cplus <= candEnd;
-                            inclCount = nnz(inclBool);
-                            if inclCount > 0
-                                subTable = candSetCheck.candTable(inclBool, :);
-                                for i = 1:inclCount
-                                    scoreSums(c) = scoreSums(c) + obj.scoreWeights(subTable{i, 'clusterGroup'} + 1);
-                                end
-                                scoreTallies(c) = scoreTallies(c) + inclCount;
-                                clear subTable i
-                            else
-                                break;
-                            end
-                            clear candEnd inclBool inclCount
-                        end
-                    end
-                    clear d candSetCheck cplus
-                    c = c+1;
+            while c < (N-1)
+                [boundScores(c), candSets, cnext] = obj.scoreBound(heatmapObj, candSets, c);
+                cplus = c+1;
+                if cnext > cplus
+                    %Pre-clustered group. Keep together.
+                    boundScores(cplus:(cnext-1)) = 0.0;
                 end
+                c = cnext;
             end
-            clear c candSet
-
-            boundScores = scoreSums ./ scoreTallies;
         end
 
         %%
