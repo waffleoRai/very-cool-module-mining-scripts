@@ -11,7 +11,7 @@ classdef ClusterAnalyzer
 
         minBinSizePwr = 3;
         maxBinSizePwr = 7;
-        shiftsPerBin = 4;
+        shiftsPerBin = 6;
 
         seedClusterSize = 4;
         maxEvalRadSyms = 5000;

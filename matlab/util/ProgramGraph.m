@@ -22,6 +22,7 @@ classdef ProgramGraph
             funcTableInfo.symbolId = int32(0);
             funcTableInfo.addressString ="NULL";
             funcTableInfo.table = ProgramGraph.genFuncTableContents(tableAllocRows);
+            funcTableInfo.len = int32(0);
         end
 
         %%
@@ -123,6 +124,9 @@ classdef ProgramGraph
                 end
 
                 ftStruct.table{:, 'AddressString'} = arrayfun(@(x) sprintf(addrFmtStr, x), ftStruct.table{:, 'Address'}, 'UniformOutput', false);
+                if ~isempty(ftStruct.table)
+                    ftStruct.len = size(ftStruct.table, 1);
+                end
                 funcTables(i) = ftStruct;
             end
 
